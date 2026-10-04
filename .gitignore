@@ -1,0 +1,9 @@
+*.o
+*.bak
+bridge.log
+bin/
+test/
+dist/
+r2_verifier
+r2_full_verifier
+r2_l2_verifier
