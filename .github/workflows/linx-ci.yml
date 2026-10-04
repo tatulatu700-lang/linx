@@ -1,0 +1,91 @@
+name: LINX CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: LINX UEFI Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify required files
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f Makefile
+          test -f bootx64.s
+          test -f build_uefi_manifold.sh
+          test -f README.md
+          echo "[OK] required files"
+
+      - name: Validate build script
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n build_uefi_manifold.sh
+          test -x build_uefi_manifold.sh
+          echo "[OK] build script"
+
+      - name: Install UEFI toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y clang lld llvm binutils gcc make
+
+      - name: Build
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./build_uefi_manifold.sh
+
+      - name: Verify EFI artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f bootx64.efi
+          file bootx64.efi
+          sha256sum bootx64.efi
+
+      - name: Verify EFI checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f bootx64.efi.sha256 ]; then
+            sha256sum -c bootx64.efi.sha256
+          else
+            echo "[INFO] bootx64.efi.sha256 not generated"
+          fi
+
+      - name: Upload EFI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linx-uefi-x86_64
+          path: |
+            bootx64.efi
+            bootx64.efi.sha256
+          if-no-files-found: error
+
+  integrity:
+    name: Repository Integrity
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Git whitespace validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          echo "[OK] git diff --check"
