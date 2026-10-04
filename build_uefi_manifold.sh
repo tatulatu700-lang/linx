@@ -1,20 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
-SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-cd "$SCRIPT_DIR"
+cd /home/ron/linx
 
 echo "============================================================"
-echo " LINX UEFI MANIFOLD BUILD (CANONICAL EFI PE32+)"
+echo " LINX UEFI MANIFOLD BUILD: SUBSTRATE BARE METAL (PE32+)"
 echo "============================================================"
 
-clang \
-    --target=x86_64-unknown-windows-msvc \
-    -c bootx64.s \
-    -o bootx64.obj
-
+# Compile substrate container into executable section
 cat << 'BLOB_EOF' > substrate_anchor.s
-.section .rdata,"dr"
+.section .text,"rx"
 .globl _binary_linum_polyglot_bin_start
 .globl _binary_linum_polyglot_bin_end
 .balign 16
@@ -47,13 +41,13 @@ lld-link \
     -nodefaultlib \
     -entry:efi_main \
     -base:0x140000000 \
-    bootx64.obj \
+    -dynamicbase \
     linx_uefi_core.obj \
     substrate_blob.obj \
     -out:bootx64.efi
 
-rm -f bootx64.obj linx_uefi_core.obj substrate_blob.obj
+rm -f linx_uefi_core.obj substrate_blob.obj
 
 sha256sum bootx64.efi > bootx64.efi.sha256
 echo "[+] EFI SHA256: $(cat bootx64.efi.sha256)"
-echo "[+] BARE-METAL MANIFOLD BUILT: EXIT 0"
+echo "[+] BARE-METAL UEFI MANIFOLD READY: EXIT 0"
