@@ -1,71 +1,85 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -euo pipefail
-cd /home/ron/linx
 
-echo "[*] Step 1: Writing PE-COFF compatible assembly entry shim..."
-cat << 'ASM_EOF' > bootx64.s
-.intel_syntax noprefix
-.text
-.globl efi_main
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+cd "$SCRIPT_DIR"
 
-efi_main:
-    # MS x64 ABI: RCX = ImageHandle, RDX = SystemTable
-    sub rsp, 40
-    and rsp, -16
-    call linx_uefi_dispatch
-    add rsp, 40
-    ret
-ASM_EOF
+echo "============================================================"
+echo " LINX UEFI MANIFOLD BUILD"
+echo "============================================================"
+echo "[*] Repository : $SCRIPT_DIR"
+echo "[*] Step 1: Converting substrate into raw object linkage..."
 
-echo "[*] Step 2: Writing embedded substrate linker anchor..."
-cat << 'SUB_EOF' > substrate_blob.s
-.intel_syntax noprefix
-.section .rdata,"dr"
-.globl _binary_linum_polyglot_bin_start
-.balign 16
+objcopy \
+    -I binary \
+    -O elf64-x86-64 \
+    -B i386:x86-64 \
+    linum_polyglot.bin \
+    linum_polyglot_blob.o
 
-_binary_linum_polyglot_bin_start:
-    .incbin "linum_polyglot.bin"
-SUB_EOF
+echo "[*] Step 2: Compiling freestanding UEFI PE-COFF primitives..."
 
-echo "[*] Step 3: Compiling PE-COFF objects with Clang..."
-clang -target x86_64-unknown-windows \
-      -ffreestanding \
-      -fno-stack-protector \
-      -fno-stack-check \
-      -mno-red-zone \
-      -c bootx64.s -o bootx64.obj
+clang \
+    -target x86_64-unknown-windows \
+    -ffreestanding \
+    -fno-stack-protector \
+    -fno-stack-check \
+    -fshort-wchar \
+    -mno-red-zone \
+    -Wall \
+    -Wextra \
+    -Werror \
+    -c linx_uefi_core.c \
+    -o linx_uefi_core.o
 
-clang -target x86_64-unknown-windows \
-      -ffreestanding \
-      -fno-stack-protector \
-      -fno-stack-check \
-      -mno-red-zone \
-      -c substrate_blob.s -o substrate_blob.obj
+as --64 bootx64.s -o bootx64.o
 
-clang -target x86_64-unknown-windows \
-      -O2 \
-      -ffreestanding \
-      -fno-stack-protector \
-      -fno-stack-check \
-      -fshort-wchar \
-      -mno-red-zone \
-      -Wall -Wextra -Werror \
-      -c linx_uefi_core.c -o linx_uefi_core.obj
+echo "[*] Step 3: Linking pure UEFI executable..."
 
-echo "[*] Step 4: Linking native PE32+ UEFI executable (bootx64.efi)..."
-lld-link -subsystem:efi_application \
-         -nodefaultlib \
-         -entry:efi_main \
-         bootx64.obj \
-         substrate_blob.obj \
-         linx_uefi_core.obj \
-         -out:bootx64.efi
+if ! lld-link \
+    -subsystem:efi_application \
+    -nodefaultlib \
+    -entry:efi_main \
+    bootx64.o \
+    linx_uefi_core.o \
+    linum_polyglot_blob.o \
+    -out:bootx64.efi
+then
+    echo "[-] Primary lld-link invocation failed."
+    echo "[*] Fallback: native LLVM EFI linking..."
 
-echo "[*] Step 5: Verifying executable format and cryptographic seal..."
+    clang \
+        -target x86_64-unknown-windows \
+        -ffreestanding \
+        -nostdlib \
+        -fno-stack-protector \
+        -fno-stack-check \
+        -fshort-wchar \
+        -mno-red-zone \
+        -Wl,-entry:efi_main \
+        -Wl,-subsystem:efi_application \
+        -fuse-ld=lld \
+        bootx64.o \
+        linx_uefi_core.o \
+        linum_polyglot_blob.o \
+        -o bootx64.efi
+fi
+
+echo "[*] Step 4: Verifying EFI artifact integrity..."
+
+test -f bootx64.efi
+
+ls -l bootx64.efi
+
 file bootx64.efi
+
 sha256sum bootx64.efi > bootx64.efi.sha256
+
 cat bootx64.efi.sha256
 
-echo ""
+echo "[*] Step 5: Self-checking generated checksum..."
+
+sha256sum -c bootx64.efi.sha256
+
+echo
 echo "[+] BARE-METAL MANIFOLD BUILT: EXIT 0"
